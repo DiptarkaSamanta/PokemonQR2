@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PokéQR2 Studio — Python Edition (FastAPI · Pillow · OpenCV)</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%23ffffff' stroke='%231e293b' stroke-width='4'/%3E%3Cpath d='M2 32a30 30 0 0 1 60 0H2z' fill='%232563eb' stroke='%231e293b' stroke-width='4'/%3E%3Crect x='2' y='29' width='60' height='6' fill='%231e293b'/%3E%3Ccircle cx='32' cy='32' r='10' fill='%23ffffff' stroke='%231e293b' stroke-width='4'/%3E%3Ccircle cx='32' cy='32' r='4' fill='%231e293b'/%3E%3C/svg%3E" />
+  </head>
+  <body>
+    <header class="studio-header">
+      <div class="header-inner">
+        <div class="brand">
+          <div class="pokeball-logo" aria-hidden="true">
+            <span class="pokeball-top great-blue"></span>
+            <span class="pokeball-band"></span>
+            <span class="pokeball-center"></span>
+          </div>
+          <div>
+            <h1>PokéQR2 Studio <span class="py-badge">Python</span></h1>
+            <p>FastAPI · Pillow · Segno · OpenCV · SQLite</p>
+          </div>
+        </div>
+
+        <nav class="header-nav" aria-label="Main navigation">
+          <button type="button" class="nav-tab active" data-main-tab="studio">QR Studio</button>
+          <button type="button" class="nav-tab" data-main-tab="shares">
+            PC Box <span class="pill-count" id="shares-count">0</span>
+          </button>
+        </nav>
+
+        <div class="network-picker-wrap">
+          <button type="button" class="network-btn" id="network-btn" title="Configure share base URL for phone scanning">
+            <span id="network-btn-label">localhost:3001</span>
+          </button>
+          <div class="network-popover hidden" id="network-popover" role="dialog" aria-label="Share Base URL">
+            <div class="popover-title">Share Base URL (Wi-Fi / Public)</div>
+            <p class="popover-desc">Phones on Wi-Fi cannot reach <code>localhost</code>. Pick your LAN IP or enter a public tunnel URL.</p>
+            <div class="network-options" id="network-options"></div>
+            <div class="custom-url-row">
+              <input type="url" id="custom-base-url" placeholder="https://your-domain.com" />
+              <button type="button" class="btn btn-primary btn-sm" id="apply-base-url">Apply</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="studio-layout" id="studio-view">
+      <div class="studio-controls-col">
+        <div class="active-share-banner hidden" id="active-share-banner">
+          <div>
+            <strong id="active-share-title">Active PokéDrop</strong>
+            <span id="active-share-url-hint"></span>
+          </div>
+          <button type="button" class="btn btn-ghost btn-xs" id="clear-active-share">Clear Active</button>
+        </div>
+
+        <!-- Step 1: Payload -->
+        <section class="studio-card">
+          <div class="card-header">
+            <div>
+              <span class="step-badge">Step 1</span>
+              <h2>Links &amp; Files Payload</h2>
+            </div>
+          </div>
+
+          <div class="payload-tabs" role="tablist">
+            <button type="button" class="payload-tab" data-payload-mode="link">Share Link</button>
+            <button type="button" class="payload-tab active" data-payload-mode="file">Share Files</button>
+            <button type="button" class="payload-tab" data-payload-mode="bundle">Link + File Box</button>
+            <button type="button" class="payload-tab" data-payload-mode="inline">Tiny Offline</button>
+          </div>
+
+          <div id="link-section" class="hidden">
+            <div class="field-group">
+              <label class="field-label" for="direct-url-input">Destination URL</label>
+              <input type="url" id="direct-url-input" value="https://pokeapi.co" placeholder="https://example.com" />
+            </div>
+            <label class="checkbox-inline strong-check">
+              <input type="checkbox" id="hosted-short-link-check" />
+              <span>Host as PokéDrop Short Link (scan counter, passcode, custom slug &amp; note)</span>
+            </label>
+            <label class="checkbox-inline hidden" id="direct-redirect-wrap">
+              <input type="checkbox" id="direct-redirect-check" />
+              <span>Instant 302 redirect when scanned (skip landing card unless PIN-locked)</span>
+            </label>
+          </div>
+
+          <div id="bundle-links-section" class="hidden">
+            <div class="label-row" style="margin-bottom: 8px;">
+              <label class="field-label">Links in this PokéDrop</label>
+              <button type="button" class="btn btn-ghost btn-xs" id="add-bundle-link">+ Add Link</button>
+            </div>
+            <div class="bundle-links-list" id="bundle-links-list"></div>
+          </div>
+
+          <div id="file-drop-section">
+            <div class="dropzone" id="file-dropzone" tabindex="0" role="button">
+              <input type="file" id="file-input" multiple hidden />
+              <strong>Drop files here or click to browse</strong>
+              <span>PDFs, images, ZIPs, docs, audio, video — up to 100 MB per file</span>
+            </div>
+            <ul class="queued-files-list" id="queued-files-list"></ul>
+          </div>
+
+          <div id="inline-section" class="hidden">
+            <div class="field-group">
+              <div class="label-row">
+                <label class="field-label" for="inline-text-input">Direct Text or Tiny Data URI (No Server)</label>
+                <span class="byte-counter" id="inline-byte-counter">0 / 1273 bytes</span>
+              </div>
+              <textarea id="inline-text-input" rows="4" placeholder="Paste text, Wi-Fi config, or embed a tiny <900B file...">Pikachu says hi from Python!</textarea>
+            </div>
+            <input type="file" id="inline-file-input" hidden />
+            <button type="button" class="btn btn-ghost btn-sm" id="inline-file-btn">Embed Tiny File (&lt;900 B)</button>
+          </div>
+
+          <details class="hosted-options-details" id="hosted-options-details" open>
+            <summary>Share Options (Title, Passcode, Expiry, Slug)</summary>
+            <div class="hosted-options-grid">
+              <div class="field-group">
+                <label class="field-label" for="share-title">Share Title (optional)</label>
+                <input type="text" id="share-title" placeholder="e.g. Team Project Assets" maxlength="120" />
+              </div>
+              <div class="field-group">
+                <label class="field-label" for="share-slug">Custom Slug (optional)</label>
+                <input type="text" id="share-slug" placeholder="e.g. pika-notes" maxlength="48" />
+              </div>
+              <div class="field-group">
+                <label class="field-label" for="share-pin">Passcode / PIN (optional)</label>
+                <input type="password" id="share-pin" placeholder="3-32 chars to lock" maxlength="32" />
+              </div>
+              <div class="field-group">
+                <label class="field-label" for="share-expiry">Expires After</label>
+                <select id="share-expiry">
+                  <option value="1h">1 Hour</option>
+                  <option value="24h">24 Hours</option>
+                  <option value="7d" selected>7 Days</option>
+                  <option value="30d">30 Days</option>
+                  <option value="never">Never</option>
+                </select>
+              </div>
+              <div class="field-group">
+                <label class="field-label" for="share-max-dl">Max Downloads (optional)</label>
+                <input type="number" id="share-max-dl" min="1" max="100000" placeholder="Unlimited" />
+              </div>
+              <div class="field-group full-span">
+                <label class="field-label" for="share-note">Trainer Note (optional)</label>
+                <textarea id="share-note" rows="2" placeholder="Message shown on the PokéDrop page..." maxlength="2000"></textarea>
+              </div>
+            </div>
+          </details>
+
+          <div class="alert-error hidden" id="payload-error"></div>
+
+          <div class="submit-share-bar" id="submit-share-bar">
+            <div class="progress-track hidden" id="upload-progress-track">
+              <div class="progress-fill" id="upload-progress-fill" style="width: 0%;"></div>
+            </div>
+            <button type="button" class="btn btn-primary btn-block" id="submit-share-btn">
+              Upload &amp; Generate PokéDrop QR
+            </button>
+          </div>
+        </section>
+
+        <!-- Step 2: Pokemon Picker -->
+        <section class="studio-card">
+          <div class="card-header">
+            <div>
+              <span class="step-badge">Step 2</span>
+              <h2>Choose Pokémon</h2>
+            </div>
+            <button type="button" class="btn btn-ghost btn-sm" id="random-pokemon-btn">Surprise Me</button>
+          </div>
+
+          <div class="selected-pokemon-banner" id="selected-pokemon-banner">
+            <img id="selected-pokemon-img" src="/api/pokemon/25/sprite?style=official&shiny=0&type=electric" alt="Pikachu" class="selected-pokemon-thumb" />
+            <div class="selected-pokemon-meta">
+              <div class="selected-title-row">
+                <strong id="selected-pokemon-name">Pikachu</strong>
+                <span class="dex-num" id="selected-pokemon-id">#025</span>
+              </div>
+              <div class="type-pills" id="selected-pokemon-types">
+                <span class="type-pill">electric</span>
+              </div>
+            </div>
+            <div class="selected-actions">
+              <button type="button" class="toggle-chip" id="shiny-toggle">Shiny</button>
+              <button type="button" class="btn btn-ghost btn-xs" id="apply-type-colors">Apply Type Colors</button>
+            </div>
+          </div>
+
+          <div class="art-style-row">
+            <div class="segmented" id="art-style-group">
+              <button type="button" class="seg-btn active" data-art-style="official">Official HD</button>
+              <button type="button" class="seg-btn" data-art-style="home">3D Home</button>
+              <button type="button" class="seg-btn" data-art-style="pixel">Pixel Sprite</button>
+            </div>
+            <input type="file" id="custom-sprite-input" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
+            <button type="button" class="btn btn-ghost btn-sm" id="custom-sprite-btn">Custom Sprite</button>
+          </div>
+
+          <label class="checkbox-inline">
+            <input type="checkbox" id="auto-palette-check" checked />
+            <span>Auto-match QR colors to Pokémon type</span>
+          </label>
+
+          <div class="search-box">
+            <input type="search" id="pokemon-search-input" placeholder="Search any Pokémon (e.g. Pikachu, Gengar, #151, Lucario)..." />
+          </div>
+
+          <div class="pokemon-grid" id="pokemon-grid"></div>
+        </section>
+
+        <!-- Step 3: QR Style -->
+        <section class="studio-card">
+          <div class="card-header">
+            <div>
+              <span class="step-badge">Step 3</span>
+              <h2>Customize QR Style (Pillow + Segno Engine)</h2>
+            </div>
+          </div>
+
+          <div class="field-group">
+            <label class="field-label">Pokémon Visual Mode</label>
+            <div class="mode-grid" id="qr-mode-grid">
+              <button type="button" class="mode-card active" data-qr-mode="pixelart">
+                <strong>8-Bit Pixel Sprite</strong>
+                <span>Grid-snapped pixel Pokémon inside retro QR</span>
+              </button>
+              <button type="button" class="mode-card" data-qr-mode="neonscene">
+                <strong>Neon Scene Glow</strong>
+                <span>Synthwave/elemental scene with glowing QR tiles</span>
+              </button>
+              <button type="button" class="mode-card" data-qr-mode="badge">
+                <strong>Center Badge</strong>
+                <span>Crisp QR with framed Pokémon center emblem</span>
+              </button>
+              <button type="button" class="mode-card" data-qr-mode="halftone">
+                <strong>Halftone Art Blend</strong>
+                <span>Pokémon art woven across QR modules</span>
+              </button>
+              <button type="button" class="mode-card" data-qr-mode="backdrop">
+                <strong>Art Backdrop</strong>
+                <span>Soft Pokémon art behind high-contrast dots</span>
+              </button>
+              <button type="button" class="mode-card" data-qr-mode="classic">
+                <strong>Clean Theme</strong>
+                <span>Pure styled QR with Pokéball corners</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="mode-subpanel" id="subpanel-pixelart">
+            <div class="two-col-controls">
+              <div class="field-group">
+                <label class="field-label">Pixel Sprite Size (<span id="pixel-scale-val">38</span>%)</label>
+                <input type="range" id="pixel-scale-range" min="0.28" max="0.50" step="0.02" value="0.38" />
+              </div>
+              <div class="field-group">
+                <label class="field-label">Retro Contrast Preset</label>
+                <button type="button" class="btn btn-ghost btn-sm" id="classic-bw-btn">Classic B&amp;W Pixel Matrix</button>
+              </div>
+            </div>
+            <label class="checkbox-inline">
+              <input type="checkbox" id="pixel-safe-dots" checked />
+              <span>Auto-add subtle edge anchors only if large sprite affects scannability</span>
+            </label>
+          </div>
+
+          <div class="mode-subpanel hidden" id="subpanel-neonscene">
+            <div class="field-group">
+              <label class="field-label">Neon Scene Atmosphere</label>
+              <div class="chip-row" id="neon-theme-chips">
+                <button type="button" class="chip-btn active" data-neon-theme="synthwave">Synthwave</button>
+                <button type="button" class="chip-btn" data-neon-theme="cyber">Cyber</button>
+                <button type="button" class="chip-btn" data-neon-theme="inferno">Inferno</button>
+                <button type="button" class="chip-btn" data-neon-theme="aurora">Aurora</button>
+                <button type="button" class="chip-btn" data-neon-theme="ocean">Ocean</button>
+                <button type="button" class="chip-btn" data-neon-theme="type">Pokémon Type</button>
+              </div>
+            </div>
+            <div class="two-col-controls">
+              <div class="field-group">
+                <label class="field-label">Neon Glow Intensity (<span id="neon-glow-val">75</span>%)</label>
+                <input type="range" id="neon-glow-range" min="0.20" max="1.0" step="0.05" value="0.75" />
+              </div>
+              <div class="field-group">
+                <label class="field-label">Tile Polarity</label>
+                <label class="checkbox-inline">
+                  <input type="checkbox" id="neon-inverted-check" checked />
+                  <span>Glowing Neon on Dark Scene</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="mode-subpanel hidden" id="subpanel-badge">
+            <div class="two-col-controls">
+              <div class="field-group">
+                <label class="field-label">Badge Size (<span id="badge-size-val">22</span>%)</label>
+                <input type="range" id="badge-size-range" min="0.16" max="0.28" step="0.01" value="0.22" />
+              </div>
+              <div class="field-group">
+                <label class="field-label">Badge Frame</label>
+                <div class="segmented" id="badge-shape-group">
+                  <button type="button" class="seg-btn active" data-badge-shape="pokeball">Pokéball</button>
+                  <button type="button" class="seg-btn" data-badge-shape="circle">Circle</button>
+                  <button type="button" class="seg-btn" data-badge-shape="squircle">Squircle</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="mode-subpanel hidden" id="subpanel-halftone">
+            <div class="field-group">
+              <label class="field-label">Artwork Blend Intensity (<span id="halftone-val">65</span>%)</label>
+              <input type="range" id="halftone-range" min="0.20" max="0.95" step="0.05" value="0.65" />
+            </div>
+          </div>
+
+          <div class="mode-subpanel hidden" id="subpanel-backdrop">
+            <div class="field-group">
+              <label class="field-label">Backdrop Opacity (<span id="backdrop-val">30</span>%)</label>
+              <input type="range" id="backdrop-range" min="0.12" max="0.55" step="0.03" value="0.30" />
+            </div>
+          </div>
+
+          <div id="shape-controls-wrap" class="hidden">
+            <div class="field-group">
+              <label class="field-label">Module Shape</label>
+              <div class="chip-row" id="module-shape-chips">
+                <button type="button" class="chip-btn active" data-module-shape="rounded">Rounded</button>
+                <button type="button" class="chip-btn" data-module-shape="dots">Dots</button>
+                <button type="button" class="chip-btn" data-module-shape="liquid">Liquid</button>
+                <button type="button" class="chip-btn" data-module-shape="pixel">Pixel</button>
+                <button type="button" class="chip-btn" data-module-shape="square">Square</button>
+              </div>
+            </div>
+            <div class="field-group">
+              <label class="field-label">Finder Corners (Eyes)</label>
+              <div class="chip-row" id="eye-shape-chips">
+                <button type="button" class="chip-btn active" data-eye-shape="pokeball">Poké Ball</button>
+                <button type="button" class="chip-btn" data-eye-shape="greatball">Great Ball</button>
+                <button type="button" class="chip-btn" data-eye-shape="ultraball">Ultra Ball</button>
+                <button type="button" class="chip-btn" data-eye-shape="masterball">Master Ball</button>
+                <button type="button" class="chip-btn" data-eye-shape="rounded">Rounded</button>
+                <button type="button" class="chip-btn" data-eye-shape="square">Square</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="color-controls-wrap">
+            <div class="label-row" style="margin-bottom: 8px;">
+              <label class="field-label">Colors &amp; Type Presets</label>
+              <label class="checkbox-inline" id="gradient-toggle-wrap">
+                <input type="checkbox" id="use-gradient-check" checked />
+                <span>Gradient</span>
+              </label>
+            </div>
+            <div class="color-pickers-grid">
+              <label class="color-swatch"><span>Dots</span><input type="color" id="fg-color" value="#1e1b4b" /></label>
+              <label class="color-swatch" id="fg2-swatch"><span>Gradient 2</span><input type="color" id="fg2-color" value="#b45309" /></label>
+              <label class="color-swatch"><span>Corners</span><input type="color" id="eye-color" value="#d97706" /></label>
+              <label class="color-swatch"><span>Background</span><input type="color" id="bg-color" value="#fefce8" /></label>
+            </div>
+            <div class="palette-dots-row" id="palette-dots-row"></div>
+          </div>
+
+          <div class="card-frame-section">
+            <label class="checkbox-inline strong-check">
+              <input type="checkbox" id="card-frame-check" />
+              <span>Export as Collectible PokéQR Share Card</span>
+            </label>
+            <div class="two-col-controls hidden" id="card-text-inputs">
+              <input type="text" id="card-headline" value="Scan to Open PokéDrop" maxlength="42" placeholder="Card Headline" />
+              <input type="text" id="card-subtitle" value="Shared via PokéQR2 (Python)" maxlength="62" placeholder="Subtitle" />
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- Sticky Preview -->
+      <div class="studio-preview-col">
+        <aside class="preview-sticky">
+          <section class="studio-card preview-card">
+            <div class="preview-top-bar">
+              <div>
+                <span class="step-badge">Live Output</span>
+                <h2 id="preview-title">Pikachu QR</h2>
+              </div>
+              <div class="scan-pill ok" id="scan-pill">Verifying...</div>
+            </div>
+
+            <div class="canvas-stage">
+              <img id="qr-preview-img" alt="Generated Pokémon QR" class="qr-canvas" />
+            </div>
+
+            <div class="scan-warning-banner hidden" id="scan-warning-banner"></div>
+
+            <div class="payload-box">
+              <div class="payload-box-header">
+                <span>Encoded QR Payload</span>
+                <span id="grid-size-label">--</span>
+              </div>
+              <div class="payload-url-row">
+                <code id="encoded-payload-code"></code>
+                <button type="button" class="icon-btn" id="copy-payload-btn" title="Copy encoded payload">Copy</button>
+                <a id="open-payload-link" href="#" target="_blank" rel="noopener noreferrer" class="icon-btn">Open</a>
+              </div>
+            </div>
+
+            <div class="export-grid">
+              <button type="button" class="btn btn-primary" id="dl-png-1024">PNG (1024px)</button>
+              <button type="button" class="btn btn-secondary" id="dl-png-2048">Print (2048px)</button>
+              <button type="button" class="btn btn-ghost" id="dl-svg">SVG Vector</button>
+              <button type="button" class="btn btn-ghost" id="copy-img-btn">Copy Image</button>
+            </div>
+          </section>
+        </aside>
+      </div>
+    </main>
+
+    <!-- PC Box Shares Manager -->
+    <main class="shares-layout hidden" id="shares-view">
+      <div class="shares-header">
+        <div>
+          <h2>Trainer PC Box — SQLite Active Shares</h2>
+          <p>Manage hosted file drops, link bundles, view counts, or load any share back into the Pokémon QR Studio.</p>
+        </div>
+        <button type="button" class="btn btn-ghost" id="refresh-shares-btn">Refresh</button>
+      </div>
+      <div id="shares-list" class="shares-list"></div>
+    </main>
+
+    <script type="module" src="/static/app.js"></script>
+  </body>
+</html>

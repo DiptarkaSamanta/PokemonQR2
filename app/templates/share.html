@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PokéDrop Transfer — PokéQR2</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="landing-shell" id="landing-shell" data-share-id="{{ share_id }}">
+      <article class="landing-card loading-state" id="landing-card">
+        <p>Opening PokéDrop transfer...</p>
+      </article>
+    </main>
+
+    <script>
+      const shell = document.getElementById('landing-shell');
+      const card = document.getElementById('landing-card');
+      const shareId = shell.dataset.shareId;
+      let unlockToken = null;
+
+      function formatBytes(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+      }
+
+      function esc(str) {
+        return String(str ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      }
+
+      function buildFileUrl(fileId, preview) {
+        const params = new URLSearchParams();
+        if (preview) params.set('preview', '1');
+        if (unlockToken) params.set('token', unlockToken);
+        const qs = params.toString();
+        return `/api/shares/${encodeURIComponent(shareId)}/files/${encodeURIComponent(fileId)}${qs ? '?' + qs : ''}`;
+      }
+
+      function renderShare(share) {
+        card.className = 'landing-card';
+        const poke = share.pokemon;
+        const sprite = poke
+          ? `/api/pokemon/${poke.id}/sprite?style=${encodeURIComponent(poke.artworkStyle || 'official')}&shiny=${poke.shiny ? '1' : '0'}`
+          : '/api/pokemon/25/sprite?style=official&shiny=0&type=electric';
+
+        const eyebrow = poke
+          ? `${esc(poke.displayName)} #${String(poke.id).padStart(3, '0')} delivered a PokéDrop`
+          : 'PokéDrop Share';
+
+        let bodyHtml = '';
+        if (!share.unlocked && share.hasPin) {
+          bodyHtml = `
+            <form class="pin-unlock-form" id="pin-form">
+              <h2>Passcode Required</h2>
+              <p>Enter the trainer passcode to view and download this PokéDrop.</p>
+              <input type="password" id="pin-input" placeholder="Enter passcode..." autofocus />
+              <div class="alert-error hidden" id="pin-error"></div>
+              <button type="submit" class="btn btn-primary btn-block">Unlock Files &amp; Links</button>
+            </form>
+          `;
+        } else {
+          const noteHtml = share.note ? `<blockquote class="trainer-note">${esc(share.note)}</blockquote>` : '';
+          const linksHtml = (share.links && share.links.length)
+            ? `<section class="landing-section">
+                <h2>Shared Links (${share.links.length})</h2>
+                <div class="shared-links-grid">
+                  ${share.links.map((l) => `
+                    <a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer" class="shared-link-card">
+                      <div><strong>${esc(l.label)}</strong><span>${esc(l.url)}</span></div>
+                      <span>Open</span>
+                    </a>`).join('')}
+                </div>
+               </section>`
+            : '';
+
+          const zipUrl = `/api/shares/${encodeURIComponent(shareId)}/zip${unlockToken ? '?token=' + encodeURIComponent(unlockToken) : ''}`;
+          const filesHtml = (share.files && share.files.length)
+            ? `<section class="landing-section">
+                <div class="landing-section-head">
+                  <h2>Shared Files (${share.files.length})</h2>
+                  ${share.files.length > 1 ? `<a href="${zipUrl}" class="btn btn-primary btn-sm">Download All (.zip)</a>` : ''}
+                </div>
+                <div class="shared-files-list">
+                  ${share.files.map((f) => {
+                    const mime = (f.mimeType || '').toLowerCase();
+                    const isImg = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'].includes(mime);
+                    const canPreview = isImg || mime.startsWith('audio/') || mime.startsWith('video/') || mime === 'application/pdf' || mime === 'text/plain';
+                    const previewUrl = buildFileUrl(f.id, true);
+                    const dlUrl = buildFileUrl(f.id, false);
+                    return `
+                      <div class="shared-file-row">
+                        <div class="shared-file-meta">
+                          ${isImg ? `<img src="${previewUrl}" alt="${esc(f.originalName)}" class="file-thumb"/>` : `<div class="file-icon-box">FILE</div>`}
+                          <div><strong>${esc(f.originalName)}</strong><span>${formatBytes(f.size)} · ${esc(f.mimeType)}</span></div>
+                        </div>
+                        <div class="shared-file-actions">
+                          ${canPreview ? `<button type="button" class="btn btn-ghost btn-sm" data-preview-id="${esc(f.id)}" data-mime="${esc(mime)}">Preview</button>` : ''}
+                          <a href="${dlUrl}" class="btn btn-primary btn-sm">Download</a>
+                        </div>
+                        <div class="inline-preview-box hidden" id="preview-box-${esc(f.id)}"></div>
+                      </div>`;
+                  }).join('')}
+                </div>
+               </section>`
+            : '';
+
+          bodyHtml = `<div class="landing-content">${noteHtml}${linksHtml}${filesHtml}</div>`;
+        }
+
+        card.innerHTML = `
+          <header class="landing-hero">
+            <img src="${sprite}" alt="${esc(poke?.displayName || 'Pokémon')}" class="landing-sprite" />
+            <div>
+              <span class="landing-eyebrow">${eyebrow}</span>
+              <h1>${esc(share.title)}</h1>
+              <div class="landing-meta">
+                <span>Created ${new Date(share.createdAt).toLocaleDateString()}</span>
+                ${share.expiresAt ? `<span>· Expires ${new Date(share.expiresAt).toLocaleString()}</span>` : ''}
+              </div>
+            </div>
+          </header>
+          ${bodyHtml}
+          <footer class="landing-footer"><a href="/">Create your own Pokémon QR in PokéQR2 →</a></footer>
+        `;
+
+        const pinForm = document.getElementById('pin-form');
+        if (pinForm) {
+          pinForm.addEventListener('submit', async (ev) => {
+            ev.preventDefault();
+            const pin = document.getElementById('pin-input').value;
+            const errEl = document.getElementById('pin-error');
+            errEl.classList.add('hidden');
+            const res = await fetch(`/api/shares/${encodeURIComponent(shareId)}/verify`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ pin })
+            });
+            const data = await res.json();
+            if (!res.ok) {
+              errEl.textContent = data.detail || 'Incorrect passcode';
+              errEl.classList.remove('hidden');
+              return;
+            }
+            unlockToken = data.token;
+            renderShare(data.share);
+          });
+        }
+
+        card.querySelectorAll('[data-preview-id]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const fid = btn.getAttribute('data-preview-id');
+            const mime = btn.getAttribute('data-mime') || '';
+            const box = document.getElementById(`preview-box-${fid}`);
+            if (!box) return;
+            if (!box.classList.contains('hidden')) {
+              box.classList.add('hidden');
+              box.innerHTML = '';
+              btn.textContent = 'Preview';
+              return;
+            }
+            const url = buildFileUrl(fid, true);
+            if (mime.startsWith('image/')) box.innerHTML = `<img src="${url}" alt="Preview" />`;
+            else if (mime.startsWith('audio/')) box.innerHTML = `<audio controls src="${url}"></audio>`;
+            else if (mime.startsWith('video/')) box.innerHTML = `<video controls src="${url}"></video>`;
+            else box.innerHTML = `<iframe src="${url}" class="preview-frame"></iframe>`;
+            box.classList.remove('hidden');
+            btn.textContent = 'Hide';
+          });
+        });
+      }
+
+      fetch(`/api/shares/${encodeURIComponent(shareId)}/public?trackView=1`)
+        .then(async (res) => {
+          const data = await res.json();
+          if (!res.ok || !data.share) throw new Error(data.detail || 'Share not found or expired');
+          renderShare(data.share);
+        })
+        .catch((err) => {
+          card.className = 'landing-card error-state';
+          card.innerHTML = `<h2>PokéDrop Unavailable</h2><p>${esc(err.message)}</p><a href="/" class="btn btn-primary">Open PokéQR2 Studio</a>`;
+        });
+    </script>
+  </body>
+</html>
